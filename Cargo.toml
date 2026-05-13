@@ -24,6 +24,7 @@ crossterm = "0.29.0"
 rpassword = "7.5.2"
 indicatif = "0.18.4"
 russh-sftp = "2.1.2"
+arboard = "3"
 
 [dev-dependencies]
 tempfile = "3"

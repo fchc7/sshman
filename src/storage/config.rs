@@ -97,7 +97,12 @@ impl Storage {
             return Ok(ConnectionStore::new());
         }
         let content = fs::read_to_string(self.connections_path())?;
-        toml::from_str(&content).map_err(|e| ConfigError::DeserializeError(e.to_string()))
+        let mut store: ConnectionStore = toml::from_str(&content).map_err(|e| ConfigError::DeserializeError(e.to_string()))?;
+        let needs_save = store.migrate_ids();
+        if needs_save {
+            self.save_connections(&store)?;
+        }
+        Ok(store)
     }
 
     pub fn save_connections(&self, store: &ConnectionStore) -> Result<(), ConfigError> {
@@ -152,6 +157,14 @@ impl Storage {
     pub fn delete_password(&self, alias: &str) -> Result<(), ConfigError> {
         let mut config = self.load_config()?;
         config.passwords.remove(alias);
+        self.save_config(&config)
+    }
+
+    pub fn rename_password(&self, old_alias: &str, new_alias: &str) -> Result<(), ConfigError> {
+        let mut config = self.load_config()?;
+        if let Some(encrypted) = config.passwords.remove(old_alias) {
+            config.passwords.insert(new_alias.to_string(), encrypted);
+        }
         self.save_config(&config)
     }
 
@@ -218,6 +231,26 @@ impl Storage {
             .ok_or_else(|| ConfigError::NotFound(format!("alias '{}' not found", alias)))?;
         updater(conn);
         self.save_connections(&store)
+    }
+
+    pub fn rename_connection(&self, old_alias: &str, new_alias: &str) -> Result<(), ConfigError> {
+        let mut store = self.load_connections()?;
+        let conn = store
+            .find_mut(old_alias)
+            .ok_or_else(|| ConfigError::NotFound(format!("alias '{}' not found", old_alias)))?;
+        conn.alias = new_alias.to_string();
+        self.save_connections(&store)?;
+        self.rename_password(old_alias, new_alias)?;
+        Ok(())
+    }
+
+    pub fn swap_connection_ids(&self, id1: u32, id2: u32) -> Result<String, ConfigError> {
+        let mut store = self.load_connections()?;
+        let msg = store
+            .swap_ids(id1, id2)
+            .map_err(|e| ConfigError::NotFound(e))?;
+        self.save_connections(&store)?;
+        Ok(msg)
     }
 }
 

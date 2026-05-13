@@ -168,6 +168,7 @@ fn run(cli: commands::Cli, ctx: &handlers::AppContext, connector: &dyn handlers:
             user,
             tags,
             color,
+            rename,
             password,
         } => {
             let alias = ctx.resolve_alias(&alias)?;
@@ -198,6 +199,7 @@ fn run(cli: commands::Cli, ctx: &handlers::AppContext, connector: &dyn handlers:
                 user.as_deref(),
                 tags,
                 color.as_deref(),
+                rename.as_deref(),
                 new_password.as_deref(),
                 mp.as_deref(),
             );
@@ -209,6 +211,27 @@ fn run(cli: commands::Cli, ctx: &handlers::AppContext, connector: &dyn handlers:
         commands::Commands::Remove { alias, force: _ } => {
             let alias = ctx.resolve_alias(&alias)?;
             let msg = handlers::handle_rm(ctx, &alias)?;
+            output::print_success(&msg);
+        }
+
+        commands::Commands::Show { alias, master_password } => {
+            let alias = ctx.resolve_alias(&alias)?;
+            let mp = master_password.unwrap_or_else(|| {
+                read_password("\u{1f510} Master password: ")
+            });
+            let pb = output::spinner("Decrypting password...");
+            let password = handlers::handle_show(ctx, &alias, &mp);
+            pb.finish_and_clear();
+            let password = password?;
+            let mut clipboard = arboard::Clipboard::new()
+                .map_err(|e| format!("failed to access clipboard: {}", e))?;
+            clipboard.set_text(&password)
+                .map_err(|e| format!("failed to copy to clipboard: {}", e))?;
+            output::print_success(&format!("Password for '{}' copied to clipboard", alias));
+        }
+
+        commands::Commands::Swap { id1, id2 } => {
+            let msg = handlers::handle_swap(ctx, id1, id2)?;
             output::print_success(&msg);
         }
 

@@ -30,11 +30,11 @@ pub fn print_connections(
     }
     table.set_header(header);
 
-    for (i, conn) in connections.iter().enumerate() {
+    for conn in connections.iter() {
         let color = parse_color(conn.color.as_deref());
 
         let mut row = vec![
-            Cell::new(i + 1),
+            Cell::new(conn.id),
             Cell::new(&conn.alias).fg(color),
             Cell::new(&conn.host).fg(color),
             Cell::new(&conn.user),

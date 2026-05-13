@@ -396,15 +396,11 @@ impl AppContext {
     }
 
     pub fn resolve_alias(&self, input: &str) -> Result<String, CommandError> {
-        if let Ok(index) = input.parse::<usize>() {
-            if index == 0 {
-                return Err(CommandError::InvalidInput("index must be >= 1".into()));
-            }
+        if let Ok(index) = input.parse::<u32>() {
             let store = self.storage.load_connections()?;
             let conn = store
-                .connections
-                .get(index - 1)
-                .ok_or_else(|| CommandError::NotFound(format!("index {} out of range (1-{})", index, store.connections.len())))?;
+                .find_by_id(index)
+                .ok_or_else(|| CommandError::NotFound(format!("id {} not found", index)))?;
             Ok(conn.alias.clone())
         } else {
             Ok(input.to_string())
@@ -534,6 +530,8 @@ pub fn handle_ls(
         results.retain(|c| c.is_local_network(ips));
     }
 
+    results.sort_by_key(|c| c.id);
+
     let total = store.connections.len();
     print_connections(&results, local_ips.as_deref(), total);
 
@@ -576,10 +574,13 @@ pub fn handle_edit(
     user: Option<&str>,
     tags: Option<Vec<String>>,
     color: Option<&str>,
+    rename: Option<&str>,
     password: Option<&str>,
     master_password: Option<&str>,
 ) -> Result<String, CommandError> {
     ctx.ensure_initialized()?;
+
+    let new_alias;
 
     if let (Some(pw), Some(mp)) = (password, master_password) {
         if !ctx.storage.verify_master_password(mp)? {
@@ -593,6 +594,7 @@ pub fn handle_edit(
     let host = host.map(String::from);
     let user = user.map(String::from);
     let color = color.map(String::from);
+    let rename = rename.map(String::from);
 
     ctx.storage.update_connection(alias, |conn| {
         if let Some(h) = host {
@@ -612,13 +614,31 @@ pub fn handle_edit(
         }
     })?;
 
-    Ok(format!("Updated connection '{}'", alias))
+    if let Some(ref new_name) = rename {
+        if new_name != alias {
+            if ctx.storage.get_connection(new_name).is_ok() {
+                return Err(CommandError::AlreadyExists(format!("alias '{}' already exists", new_name)));
+            }
+            ctx.storage.rename_connection(alias, new_name)?;
+        }
+        new_alias = new_name.clone();
+    } else {
+        new_alias = alias.to_string();
+    }
+
+    Ok(format!("Updated connection '{}'", new_alias))
 }
 
 pub fn handle_rm(ctx: &AppContext, alias: &str) -> Result<String, CommandError> {
     ctx.ensure_initialized()?;
     let conn = ctx.storage.remove_connection(alias)?;
     Ok(format!("Removed connection '{}'", conn.alias))
+}
+
+pub fn handle_swap(ctx: &AppContext, id1: u32, id2: u32) -> Result<String, CommandError> {
+    ctx.ensure_initialized()?;
+    let msg = ctx.storage.swap_connection_ids(id1, id2)?;
+    Ok(msg)
 }
 
 pub fn handle_upload(
@@ -663,6 +683,12 @@ pub fn handle_download(
     };
     connector.download(&conn.host, conn.port, &conn.user, password, remote_path, &local_path)?;
     Ok(format!("Downloaded {}:{} -> {}", conn.host, remote_path, local_path))
+}
+
+pub fn handle_show(ctx: &AppContext, alias: &str, master_password: &str) -> Result<String, CommandError> {
+    ctx.ensure_initialized()?;
+    let password = ctx.get_password(alias, master_password)?;
+    Ok(password)
 }
 
 #[cfg(test)]
@@ -936,6 +962,7 @@ mod tests {
             Some("green"),
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -965,6 +992,7 @@ mod tests {
             Some("blue"),
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -981,6 +1009,7 @@ mod tests {
             &ctx,
             &ok_connector(),
             "nope",
+            None,
             None,
             None,
             None,
@@ -1045,6 +1074,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("new_password"),
             Some("master"),
         )
@@ -1064,6 +1094,7 @@ mod tests {
             &ctx,
             &ok_connector(),
             "app",
+            None,
             None,
             None,
             None,
@@ -1090,10 +1121,84 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("wrong_ssh"),
             Some("master"),
         );
         assert!(matches!(result, Err(CommandError::ConnectionFailed(_))));
+    }
+
+    #[test]
+    fn test_handle_edit_rename() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+        add_test_conn(&ctx, "app", "10.0.0.1");
+
+        handle_edit(
+            &ctx,
+            &ok_connector(),
+            "app",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("myapp"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let store = ctx.storage.load_connections().unwrap();
+        assert_eq!(store.connections[0].alias, "myapp");
+    }
+
+    #[test]
+    fn test_handle_edit_rename_keeps_password() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+        add_test_conn(&ctx, "app", "10.0.0.1");
+
+        handle_edit(
+            &ctx,
+            &ok_connector(),
+            "app",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("myapp"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let pw = ctx.storage.get_password("myapp", "master").unwrap();
+        assert_eq!(pw, "test_pass");
+    }
+
+    #[test]
+    fn test_handle_edit_rename_conflict() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+        add_test_conn(&ctx, "app", "10.0.0.1");
+        add_test_conn(&ctx, "web", "10.0.0.2");
+
+        let result = handle_edit(
+            &ctx,
+            &ok_connector(),
+            "app",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("web"),
+            None,
+            None,
+        );
+        assert!(matches!(result, Err(CommandError::AlreadyExists(_))));
     }
 
     #[test]
@@ -1174,6 +1279,129 @@ mod tests {
     fn test_handle_reset_all_not_initialized() {
         let (_dir, ctx) = setup();
         let result = handle_reset_all(&ctx, "master");
+        assert!(matches!(result, Err(CommandError::NotInitialized)));
+    }
+
+    #[test]
+    fn test_handle_show() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+        add_test_conn(&ctx, "app", "10.0.0.1");
+
+        let password = handle_show(&ctx, "app", "master").unwrap();
+        assert_eq!(password, "test_pass");
+    }
+
+    #[test]
+    fn test_handle_show_wrong_master_password() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+        add_test_conn(&ctx, "app", "10.0.0.1");
+
+        let result = handle_show(&ctx, "app", "wrong");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_handle_show_not_found() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+
+        let result = handle_show(&ctx, "nonexistent", "master");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_handle_show_not_initialized() {
+        let (_dir, ctx) = setup();
+        let result = handle_show(&ctx, "app", "master");
+        assert!(matches!(result, Err(CommandError::NotInitialized)));
+    }
+
+    #[test]
+    fn test_handle_swap_reassign() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+        add_test_conn(&ctx, "app", "10.0.0.1");
+        add_test_conn(&ctx, "web", "10.0.0.2");
+
+        let store = ctx.storage.load_connections().unwrap();
+        let app_id = store.find("app").unwrap().id;
+        let web_id = store.find("web").unwrap().id;
+
+        let msg = handle_swap(&ctx, app_id, 5).unwrap();
+        assert!(msg.contains("Reassigned"));
+
+        let store = ctx.storage.load_connections().unwrap();
+        assert_eq!(store.find("app").unwrap().id, 5);
+        assert_eq!(store.find("web").unwrap().id, web_id);
+    }
+
+    #[test]
+    fn test_handle_swap_exchange() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+        add_test_conn(&ctx, "app", "10.0.0.1");
+        add_test_conn(&ctx, "web", "10.0.0.2");
+
+        let store = ctx.storage.load_connections().unwrap();
+        let app_id = store.find("app").unwrap().id;
+        let web_id = store.find("web").unwrap().id;
+
+        let msg = handle_swap(&ctx, app_id, web_id).unwrap();
+        assert!(msg.contains("Swapped"));
+
+        let store = ctx.storage.load_connections().unwrap();
+        assert_eq!(store.find("app").unwrap().id, web_id);
+        assert_eq!(store.find("web").unwrap().id, app_id);
+    }
+
+    #[test]
+    fn test_handle_swap_fill_gap() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+        add_test_conn(&ctx, "app", "10.0.0.1");
+        add_test_conn(&ctx, "web", "10.0.0.2");
+        add_test_conn(&ctx, "db", "10.0.0.3");
+
+        ctx.storage.remove_connection("web").unwrap();
+
+        let store = ctx.storage.load_connections().unwrap();
+        let db_id = store.find("db").unwrap().id;
+
+        handle_swap(&ctx, db_id, 2).unwrap();
+
+        let store = ctx.storage.load_connections().unwrap();
+        assert_eq!(store.find("db").unwrap().id, 2);
+    }
+
+    #[test]
+    fn test_handle_swap_same_id() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+        add_test_conn(&ctx, "app", "10.0.0.1");
+
+        let store = ctx.storage.load_connections().unwrap();
+        let app_id = store.find("app").unwrap().id;
+
+        let result = handle_swap(&ctx, app_id, app_id);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_handle_swap_source_not_found() {
+        let (_dir, ctx) = setup();
+        init_ctx(&ctx);
+        add_test_conn(&ctx, "app", "10.0.0.1");
+
+        let result = handle_swap(&ctx, 99, 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_handle_swap_not_initialized() {
+        let (_dir, ctx) = setup();
+        let result = handle_swap(&ctx, 1, 2);
         assert!(matches!(result, Err(CommandError::NotInitialized)));
     }
 }

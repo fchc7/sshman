@@ -65,7 +65,7 @@ pub enum Commands {
     },
     #[command(about = "Edit a saved connection")]
     Edit {
-        #[arg(help = "Connection alias")]
+        #[arg(help = "Connection alias or index number")]
         alias: String,
         #[arg(short = 'h', long, help = "New hostname or IP address")]
         host: Option<String>,
@@ -77,6 +77,8 @@ pub enum Commands {
         tags: Option<Vec<String>>,
         #[arg(short = 'c', long, help = "New display color")]
         color: Option<String>,
+        #[arg(short = 'a', long, help = "New alias name")]
+        rename: Option<String>,
         #[arg(long, help = "Change SSH password (will prompt)")]
         password: bool,
     },
@@ -86,6 +88,20 @@ pub enum Commands {
         alias: String,
         #[arg(long, help = "Skip confirmation prompt")]
         force: bool,
+    },
+    #[command(about = "Show decrypted SSH password for a connection")]
+    Show {
+        #[arg(help = "Connection alias or index number")]
+        alias: String,
+        #[arg(short, long, help = "Master password (will prompt if not provided)")]
+        master_password: Option<String>,
+    },
+    #[command(about = "Swap or reassign connection IDs")]
+    Swap {
+        #[arg(help = "Source connection ID")]
+        id1: u32,
+        #[arg(help = "Target ID (swap if occupied, reassign if free)")]
+        id2: u32,
     },
     #[command(visible_alias("up"), about = "Upload a file to a remote server")]
     Upload {

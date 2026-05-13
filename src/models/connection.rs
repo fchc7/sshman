@@ -6,6 +6,8 @@ use crate::network::subnet::is_in_same_subnet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Connection {
+    #[serde(default)]
+    pub id: u32,
     pub alias: String,
     pub host: String,
     pub port: u16,
@@ -19,6 +21,7 @@ pub struct Connection {
 impl Connection {
     pub fn new(alias: String, host: String, port: u16, user: String) -> Self {
         Self {
+            id: 0,
             alias,
             host,
             port,
@@ -71,20 +74,44 @@ impl Connection {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ConnectionStore {
+    #[serde(default)]
+    pub next_id: u32,
     pub connections: Vec<Connection>,
 }
 
 impl ConnectionStore {
     pub fn new() -> Self {
         Self {
+            next_id: 0,
             connections: Vec::new(),
         }
     }
 
-    pub fn add(&mut self, conn: Connection) -> Result<(), String> {
+    pub fn migrate_ids(&mut self) -> bool {
+        let max_id = self.connections.iter().map(|c| c.id).max().unwrap_or(0);
+        let mut changed = false;
+        for conn in &mut self.connections {
+            if conn.id == 0 {
+                self.next_id += 1;
+                conn.id = self.next_id;
+                changed = true;
+            }
+        }
+        if changed {
+            self.next_id = self.next_id.max(max_id);
+        } else if self.next_id < max_id {
+            self.next_id = max_id;
+            changed = true;
+        }
+        changed
+    }
+
+    pub fn add(&mut self, mut conn: Connection) -> Result<(), String> {
         if self.find(&conn.alias).is_some() {
             return Err(format!("alias '{}' already exists", conn.alias));
         }
+        self.next_id += 1;
+        conn.id = self.next_id;
         self.connections.push(conn);
         Ok(())
     }
@@ -102,8 +129,44 @@ impl ConnectionStore {
         self.connections.iter().find(|c| c.alias == alias)
     }
 
+    pub fn find_by_id(&self, id: u32) -> Option<&Connection> {
+        self.connections.iter().find(|c| c.id == id)
+    }
+
     pub fn find_mut(&mut self, alias: &str) -> Option<&mut Connection> {
         self.connections.iter_mut().find(|c| c.alias == alias)
+    }
+
+    pub fn swap_ids(&mut self, id1: u32, id2: u32) -> Result<String, String> {
+        if id1 == id2 {
+            return Err("IDs are the same, nothing to swap".into());
+        }
+        let has_id1 = self.connections.iter().any(|c| c.id == id1);
+        if !has_id1 {
+            return Err(format!("id {} not found", id1));
+        }
+        let has_id2 = self.connections.iter().any(|c| c.id == id2);
+        if has_id2 {
+            let alias1 = self.find_by_id(id1).unwrap().alias.clone();
+            let alias2 = self.find_by_id(id2).unwrap().alias.clone();
+            for conn in &mut self.connections {
+                if conn.id == id1 {
+                    conn.id = id2;
+                } else if conn.id == id2 {
+                    conn.id = id1;
+                }
+            }
+            Ok(format!("Swapped: {} <-> {}", alias1, alias2))
+        } else {
+            let alias1 = self.find_by_id(id1).unwrap().alias.clone();
+            for conn in &mut self.connections {
+                if conn.id == id1 {
+                    conn.id = id2;
+                    break;
+                }
+            }
+            Ok(format!("Reassigned: {} #{} -> #{}", alias1, id1, id2))
+        }
     }
 
     pub fn search(&self, keyword: &str) -> Vec<&Connection> {
