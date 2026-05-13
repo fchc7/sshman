@@ -1,5 +1,9 @@
 # sshman
 
+[![Release](https://img.shields.io/github/v/release/fchc7/sshman?include_prereleases)](https://github.com/fchc7/sshman/releases)
+[![CI](https://github.com/fchc7/sshman/actions/workflows/release.yml/badge.svg)](https://github.com/fchc7/sshman/actions/workflows/release.yml)
+[![License](https://img.shields.io/github/license/fchc7/sshman)](LICENSE)
+
 SSH connection manager CLI — encrypted password storage, aliases, tags, colored output, LAN detection, and SFTP file transfer.
 
 ## Features
