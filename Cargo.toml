@@ -1,0 +1,30 @@
+[package]
+name = "sshman"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+dialoguer = "0.11"
+colored = "2"
+comfy-table = "7"
+age = "0.10"
+secrecy = "0.8"
+local-ip-address = "0.6"
+ipnet = "2"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+russh = { version = "0.60.2", default-features = false, features = ["ring", "flate2", "rsa"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "io-std", "fs"] }
+crossterm = "0.29.0"
+rpassword = "7.5.2"
+indicatif = "0.18.4"
+russh-sftp = "2.1.2"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
