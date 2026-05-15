@@ -274,8 +274,11 @@ async fn russh_connect_interactive_async(
         .await
         .map_err(|e| CommandError::ConnectionFailed(format!("failed to open channel: {}", e)))?;
 
+    let (cols, rows) = crossterm::terminal::size()
+        .unwrap_or((80, 24));
+
     channel
-        .request_pty(true, "xterm", 80, 24, 0, 0, &[])
+        .request_pty(true, "xterm", cols as u32, rows as u32, 0, 0, &[])
         .await
         .map_err(|e| CommandError::ConnectionFailed(format!("failed to request pty: {}", e)))?;
 
@@ -290,6 +293,25 @@ async fn russh_connect_interactive_async(
 
     crossterm::terminal::enable_raw_mode()
         .map_err(|e| CommandError::ConnectionFailed(format!("failed to enable raw mode: {}", e)))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn SetConsoleOutputCP(codepage: u32) -> i32;
+            fn SetConsoleCP(codepage: u32) -> i32;
+            fn GetStdHandle(nStdHandle: u32) -> *mut std::ffi::c_void;
+            fn SetConsoleMode(hConsoleHandle: *mut std::ffi::c_void, dwMode: u32) -> i32;
+        }
+        const STD_INPUT_HANDLE: u32 = 4294967286;
+        const ENABLE_VIRTUAL_TERMINAL_INPUT: u32 = 512;
+        unsafe {
+            SetConsoleOutputCP(65001);
+            SetConsoleCP(65001);
+            let stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+            SetConsoleMode(stdin_handle, ENABLE_VIRTUAL_TERMINAL_INPUT);
+        }
+    }
 
     let raw_guard = RawModeGuard;
 
